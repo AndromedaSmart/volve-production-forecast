@@ -3,28 +3,35 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 
-from .config import DATA_PATH
+from .config import DATA_PATH, ROOT
 
+CACHE_DIR = ROOT / "data" / ".cache"
+
+DAILY_USECOLS = [
+    "DATEPRD",
+    "NPD_WELL_BORE_NAME",
+    "ON_STREAM_HRS",
+    "AVG_DOWNHOLE_PRESSURE",
+    "AVG_WHP_P",
+    "BORE_OIL_VOL",
+    "BORE_GAS_VOL",
+    "BORE_WAT_VOL",
+    "FLOW_KIND",
+    "WELL_TYPE",
+]
 
 DAILY_NUMERIC = [
     "ON_STREAM_HRS",
     "AVG_DOWNHOLE_PRESSURE",
-    "AVG_DOWNHOLE_TEMPERATURE",
-    "AVG_DP_TUBING",
-    "AVG_ANNULUS_PRESS",
-    "AVG_CHOKE_SIZE_P",
     "AVG_WHP_P",
-    "AVG_WHT_P",
-    "DP_CHOKE_SIZE",
     "BORE_OIL_VOL",
     "BORE_GAS_VOL",
     "BORE_WAT_VOL",
-    "BORE_WI_VOL",
 ]
 
 
@@ -33,8 +40,37 @@ def _to_numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(cleaned, errors="coerce")
 
 
+def _cache_file(src: Path, name: str) -> Path:
+    stamp = int(src.stat().st_mtime)
+    return CACHE_DIR / f"{name}-{stamp}.pkl"
+
+
+def _read_cache(path: Path) -> Optional[pd.DataFrame]:
+    if not path.exists():
+        return None
+    try:
+        return pd.read_pickle(path)
+    except Exception:
+        return None
+
+
+def _write_cache(path: Path, df: pd.DataFrame) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    prefix = path.name.split("-")[0]
+    for old in CACHE_DIR.glob(f"{prefix}-*.pkl"):
+        if old != path:
+            old.unlink()
+    df.to_pickle(path, protocol=4)
+
+
 def load_daily(path: Optional[Path] = None) -> pd.DataFrame:
-    df = pd.read_excel(path or DATA_PATH, sheet_name="Daily Production Data")
+    src = Path(path or DATA_PATH)
+    cache = _cache_file(src, "daily")
+    cached = _read_cache(cache)
+    if cached is not None:
+        return cached
+
+    df = pd.read_excel(src, sheet_name="Daily Production Data", usecols=DAILY_USECOLS)
     df["DATEPRD"] = pd.to_datetime(df["DATEPRD"])
     for col in DAILY_NUMERIC:
         if col in df.columns:
@@ -43,12 +79,19 @@ def load_daily(path: Optional[Path] = None) -> pd.DataFrame:
     df["FLOW_KIND"] = df["FLOW_KIND"].astype(str).str.strip().str.lower()
     df["WELL_TYPE"] = df["WELL_TYPE"].astype(str).str.strip().str.upper()
     df["YEAR_MONTH"] = df["DATEPRD"].dt.to_period("M").dt.to_timestamp()
-    return df.sort_values(["WELL", "DATEPRD"]).reset_index(drop=True)
+    df = df.sort_values(["WELL", "DATEPRD"]).reset_index(drop=True)
+    _write_cache(cache, df)
+    return df
 
 
 def load_monthly(path: Optional[Path] = None) -> pd.DataFrame:
-    raw = pd.read_excel(path or DATA_PATH, sheet_name="Monthly Production Data", header=None)
-    # Первая строка — имена, вторая — единицы измерения.
+    src = Path(path or DATA_PATH)
+    cache = _cache_file(src, "monthly")
+    cached = _read_cache(cache)
+    if cached is not None:
+        return cached
+
+    raw = pd.read_excel(src, sheet_name="Monthly Production Data", header=None)
     columns = [
         "WELL",
         "NPD_CODE",
@@ -73,7 +116,9 @@ def load_monthly(path: Optional[Path] = None) -> pd.DataFrame:
     df[["OIL", "GAS", "WATER", "ON_STREAM_HRS", "GI", "WI"]] = df[
         ["OIL", "GAS", "WATER", "ON_STREAM_HRS", "GI", "WI"]
     ].fillna(0.0)
-    return df.sort_values(["WELL", "DATE"]).reset_index(drop=True)
+    df = df.sort_values(["WELL", "DATE"]).reset_index(drop=True)
+    _write_cache(cache, df)
+    return df
 
 
 def monthly_field(monthly: pd.DataFrame) -> pd.DataFrame:
@@ -106,31 +151,29 @@ def monthly_field(monthly: pd.DataFrame) -> pd.DataFrame:
 
 
 def well_summary(daily: pd.DataFrame, monthly: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-    for well, part in daily.groupby("WELL"):
-        mpart = monthly.loc[monthly["WELL"] == well]
-        rows.append(
-            {
-                "well": well,
-                "daily_rows": int(len(part)),
-                "date_min": part["DATEPRD"].min(),
-                "date_max": part["DATEPRD"].max(),
-                "flow_kinds": ", ".join(sorted(part["FLOW_KIND"].dropna().unique())),
-                "well_types": ", ".join(sorted(part["WELL_TYPE"].dropna().unique())),
-                "oil_sm3": float(mpart["OIL"].sum()),
-                "gas_sm3": float(mpart["GAS"].sum()),
-                "water_sm3": float(mpart["WATER"].sum()),
-                "wi_sm3": float(mpart["WI"].sum()),
-                "on_stream_hrs": float(mpart["ON_STREAM_HRS"].sum()),
-            }
-        )
-    return pd.DataFrame(rows).sort_values("oil_sm3", ascending=False).reset_index(drop=True)
+    daily_agg = daily.groupby("WELL", as_index=False).agg(
+        daily_rows=("DATEPRD", "size"),
+        date_min=("DATEPRD", "min"),
+        date_max=("DATEPRD", "max"),
+        flow_kinds=("FLOW_KIND", lambda s: ", ".join(sorted(pd.unique(s.dropna())))),
+        well_types=("WELL_TYPE", lambda s: ", ".join(sorted(pd.unique(s.dropna())))),
+    )
+    monthly_agg = monthly.groupby("WELL", as_index=False).agg(
+        oil_sm3=("OIL", "sum"),
+        gas_sm3=("GAS", "sum"),
+        water_sm3=("WATER", "sum"),
+        wi_sm3=("WI", "sum"),
+        on_stream_hrs=("ON_STREAM_HRS", "sum"),
+    )
+    out = daily_agg.merge(monthly_agg, left_on="WELL", right_on="WELL", how="left")
+    out = out.rename(columns={"WELL": "well"})
+    return out.sort_values("oil_sm3", ascending=False).reset_index(drop=True)
 
 
 def slice_history(field: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
     start_ts = pd.Timestamp(start)
     end_ts = pd.Timestamp(end)
-    out = field.loc[(field["DATE"] >= start_ts) & (field["DATE"] <= end_ts)].copy()
+    out = field.loc[(field["DATE"] >= start_ts) & (field["DATE"] <= end_ts)]
     return out.reset_index(drop=True)
 
 

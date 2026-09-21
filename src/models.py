@@ -11,10 +11,9 @@ from scipy.optimize import curve_fit
 from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 from .config import HORIZON_MONTHS
-from .features import feature_columns, make_supervised
+from .features import feature_columns, make_supervised, recursive_feature_row
 
 
 RECENT_MONTHS = 18
@@ -37,7 +36,7 @@ def fit_arps(values: np.ndarray) -> Tuple[str, np.ndarray]:
             y,
             p0=(qi0, 0.02),
             bounds=([0.0, -0.15], [qi0 * 4 + 1.0, 0.6]),
-            maxfev=8000,
+            maxfev=2000,
         )
         return "exp", popt
     except Exception:
@@ -70,7 +69,7 @@ def _normal_mask(hours: pd.Series) -> pd.Series:
 
 def forecast_robust_level(field_hist: pd.DataFrame, target: str, horizon: int) -> np.ndarray:
     """Медианный уровень по месяцам без явного простоя."""
-    tail = field_hist.iloc[-12:].copy()
+    tail = field_hist.iloc[-12:]
     mask = _normal_mask(tail["on_stream"])
     vals = tail.loc[mask, target]
     if vals.empty:
@@ -81,8 +80,7 @@ def forecast_robust_level(field_hist: pd.DataFrame, target: str, horizon: int) -
 
 def forecast_rate_decline(field_hist: pd.DataFrame, target: str, horizon: int) -> np.ndarray:
     """Экспонента по удельной добыче (объём / часы) на нормальных месяцах."""
-    tail = field_hist.iloc[-RECENT_MONTHS:].copy()
-    hours = tail["on_stream"].clip(lower=1.0)
+    tail = field_hist.iloc[-RECENT_MONTHS:]
     mask = _normal_mask(tail["on_stream"])
     work = tail.loc[mask]
     if len(work) < 4:
@@ -100,7 +98,11 @@ def forecast_holt(train: pd.Series, horizon: int) -> Optional[np.ndarray]:
     if len(y) < 10:
         return None
     try:
-        model = ExponentialSmoothing(y, trend="add", damped_trend=True, seasonal=None, initialization_method="estimated")
+        from statsmodels.tsa.holtwinters import ExponentialSmoothing
+
+        model = ExponentialSmoothing(
+            y, trend="add", damped_trend=True, seasonal=None, initialization_method="estimated"
+        )
         fit = model.fit(optimized=True)
         return np.clip(np.asarray(fit.forecast(horizon)), 0, None)
     except Exception:
@@ -117,46 +119,47 @@ def _ridge_pipeline() -> Pipeline:
 
 
 def _recursive_ml(train_field: pd.DataFrame, target: str, horizon: int) -> Optional[np.ndarray]:
-    supervised = make_supervised(train_field, target)
+    hist = train_field.sort_values("DATE").reset_index(drop=True)
+    supervised = make_supervised(hist, target)
     feats = feature_columns(target)
-    work = supervised.dropna(subset=feats + [target]).copy()
+    work = supervised.dropna(subset=feats + [target])
     if len(work) < 10:
         return None
     model = _ridge_pipeline()
     model.fit(work[feats], work[target])
-    history = train_field.copy().sort_values("DATE").reset_index(drop=True)
+
+    target_hist = hist[target].to_numpy(dtype=float)
+    water_hist = hist["water"].to_numpy(dtype=float)
+    last_month = int(hist["DATE"].dt.month.iloc[-1])
+    last_on_stream = float(hist["on_stream"].iloc[-1])
+    median_on_stream = float(np.nanmedian(hist["on_stream"].iloc[-6:]))
+    last_producers = float(hist["n_producers"].iloc[-1])
+    n0 = len(hist)
     preds = []
-    last_on_stream = float(np.nanmedian(history.iloc[-6:]["on_stream"]))
-    last_producers = float(history["n_producers"].iloc[-1])
-    last_water = float(history["water"].iloc[-1])
-    for _ in range(horizon):
-        next_date = history["DATE"].iloc[-1] + pd.offsets.MonthBegin(1)
-        stub = history.iloc[-1].to_dict()
-        stub.update(
-            {
-                "DATE": next_date,
-                "oil": np.nan,
-                "gas": np.nan,
-                "water": last_water,
-                "on_stream": last_on_stream,
-                "n_producers": last_producers,
-            }
+    for step in range(horizon):
+        month = ((last_month + step) % 12) + 1
+        on_stream_lag1 = last_on_stream if step == 0 else median_on_stream
+        row = recursive_feature_row(
+            target=target,
+            t=float(n0 + step),
+            month=month,
+            on_stream_lag1=on_stream_lag1,
+            n_producers_lag1=last_producers,
+            target_hist=target_hist,
+            water_hist=water_hist,
         )
-        stub[target] = np.nan
-        trial = pd.concat([history, pd.DataFrame([stub])], ignore_index=True)
-        row = make_supervised(trial, target).iloc[-1]
-        x = row[feats].to_frame().T.fillna(0.0)
+        x = pd.DataFrame([row], columns=feats).fillna(0.0)
         yhat = max(float(model.predict(x)[0]), 0.0)
         preds.append(yhat)
-        trial.loc[trial.index[-1], target] = yhat
-        history = trial
+        target_hist = np.append(target_hist, yhat)
+        water_hist = np.append(water_hist, water_hist[-1] if len(water_hist) else 0.0)
     return np.asarray(preds, dtype=float)
 
 
 def _well_arps_sum(monthly: pd.DataFrame, cutoff: pd.Timestamp, horizon: int, target_col: str) -> np.ndarray:
     total = np.zeros(horizon, dtype=float)
-    for _, part in monthly.groupby("WELL"):
-        hist = part.loc[part["DATE"] <= cutoff].sort_values("DATE")
+    for _, part in monthly.groupby("WELL", sort=False):
+        hist = part.loc[part["DATE"] <= cutoff]
         series = hist[target_col]
         if series.fillna(0).sum() <= 0:
             continue
@@ -200,29 +203,31 @@ class FieldForecaster:
         cands["blend"] = 0.5 * cands["robust_level"] + 0.5 * cands["arps_field"]
         return cands
 
-    def _select(self, field_hist: pd.DataFrame, monthly_hist: pd.DataFrame, target: str) -> Tuple[str, np.ndarray, float]:
+    def _fit_one(self, field_hist: pd.DataFrame, target: str) -> Tuple[str, np.ndarray, float]:
         hist = field_hist
         if len(hist) >= 8:
             hours = hist["on_stream"]
             recent_med = hours.iloc[-12:].median()
             if recent_med and hours.iloc[-1] < 0.45 * recent_med:
                 hist = hist.iloc[:-1]
-        cands = self._candidates(hist, monthly_hist, target)
         n_pos = int((hist[target] > 0).sum())
-        # Ridge устойчив на длинной истории; на коротком первом окне — смесь Арпса и уровня.
-        if "ridge_lags" in cands and n_pos >= 30:
-            return "ridge_lags", cands["ridge_lags"], float("nan")
-        return "blend", cands["blend"], float("nan")
+        if n_pos >= 30:
+            ml = _recursive_ml(hist, target, self.horizon)
+            if ml is not None:
+                return "ridge_lags", ml, float("nan")
+        blend = 0.5 * forecast_robust_level(hist, target, self.horizon) + 0.5 * forecast_arps(
+            hist[target], self.horizon
+        )
+        return "blend", blend, float("nan")
 
     def fit_predict(self, field: pd.DataFrame, monthly: pd.DataFrame, cutoff: str) -> ForecastResult:
         cutoff_ts = pd.Timestamp(cutoff)
-        field_hist = field.loc[field["DATE"] <= cutoff_ts].copy()
-        monthly_hist = monthly.loc[monthly["DATE"] <= cutoff_ts].copy()
+        field_hist = field.loc[field["DATE"] <= cutoff_ts]
         if field_hist.empty:
             raise ValueError("Пустая история до даты отсечения")
 
-        oil_name, oil, oil_val = self._select(field_hist, monthly_hist, "oil")
-        gas_name, gas, gas_val = self._select(field_hist, monthly_hist, "gas")
+        oil_name, oil, oil_val = self._fit_one(field_hist, "oil")
+        gas_name, gas, gas_val = self._fit_one(field_hist, "gas")
         self.chosen_ = {
             "oil": oil_name,
             "gas": gas_name,
@@ -249,10 +254,10 @@ class FieldForecaster:
 
 
 def _residual_sigma(series: pd.Series) -> float:
-    y = series.fillna(0).astype(float)
+    y = series.fillna(0).to_numpy(dtype=float)
     if len(y) < 4:
-        return float(y.std() if len(y) else 0.0)
-    return float(y.diff().dropna().std(ddof=1))
+        return float(np.std(y) if len(y) else 0.0)
+    return float(np.std(np.diff(y), ddof=1))
 
 
 def _interval(pred: np.ndarray, sigma: float, steps: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:

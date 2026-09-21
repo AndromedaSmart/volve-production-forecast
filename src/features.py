@@ -42,9 +42,46 @@ def feature_columns(target: str) -> List[str]:
 
 
 def make_supervised(field: pd.DataFrame, target: str) -> pd.DataFrame:
-    work = field.copy().sort_values("DATE").reset_index(drop=True)
+    work = field.sort_values("DATE").reset_index(drop=True)
     work = add_calendar(work)
     work["on_stream_lag1"] = work["on_stream"].shift(1)
     work["n_producers_lag1"] = work["n_producers"].shift(1)
     work = add_lags(work, [target, "water"])
     return work
+
+
+def lag_or_nan(values: np.ndarray, lag: int) -> float:
+    if len(values) < lag:
+        return np.nan
+    return float(values[-lag])
+
+
+def shifted_roll_mean(values: np.ndarray, window: int) -> float:
+    if len(values) == 0:
+        return np.nan
+    return float(np.mean(values[-window:]))
+
+
+def recursive_feature_row(
+    *,
+    target: str,
+    t: float,
+    month: int,
+    on_stream_lag1: float,
+    n_producers_lag1: float,
+    target_hist: np.ndarray,
+    water_hist: np.ndarray,
+) -> dict:
+    row = {
+        "t": t,
+        "month_sin": float(np.sin(2 * np.pi * month / 12.0)),
+        "month_cos": float(np.cos(2 * np.pi * month / 12.0)),
+        "on_stream_lag1": on_stream_lag1,
+        "n_producers_lag1": n_producers_lag1,
+    }
+    for col, hist in ((target, target_hist), ("water", water_hist)):
+        for lag in LAGS:
+            row[f"{col}_lag{lag}"] = lag_or_nan(hist, lag)
+        for win in ROLLS:
+            row[f"{col}_rmean{win}"] = shifted_roll_mean(hist, win)
+    return row
