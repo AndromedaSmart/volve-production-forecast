@@ -4,6 +4,7 @@
 
 Репозиторий: https://github.com/AndromedaSmart/volve-production-forecast  
 Тетрадка: [`solution.ipynb`](solution.ipynb)  
+Альбом графиков: [`FIGURES.md`](FIGURES.md)  
 Данные: [`data/data.xlsx`](data/data.xlsx)
 
 ---
