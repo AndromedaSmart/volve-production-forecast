@@ -12,7 +12,8 @@ Jupyter-тетрадка и модель для кейса: по истории 
 | газ | 23.6% |
 
 Полный отчёт с графиками и таблицами по требованиям кейса: **[REPORT.md](REPORT.md)**.  
-Альбом всех рисунков с подписями и легендой: **[FIGURES.md](FIGURES.md)**.
+Альбом всех рисунков с подписями и легендой: **[FIGURES.md](FIGURES.md)**.  
+Запуск в браузере: **[открыть в Google Colab](https://colab.research.google.com/github/AndromedaSmart/volve-production-forecast/blob/master/colab.ipynb)**.
 
 Полная таблица MAE / MAPE / WAPE — в `reports/metrics_windows.csv` и в `solution.ipynb`.
 
@@ -26,11 +27,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Тетрадка:
+Тетрадка локально:
 
 ```bash
 jupyter notebook solution.ipynb
 ```
+
+В Google Colab (клонирует репозиторий и рисует все графики):
+
+https://colab.research.google.com/github/AndromedaSmart/volve-production-forecast/blob/master/colab.ipynb
 
 Пакетный прогон графиков и метрик:
 
@@ -52,6 +57,7 @@ forecast.oil, forecast.gas
 
 ## Что внутри
 
+- `colab.ipynb` — короткая тетрадка для Google Colab: запуск и вывод всех графиков
 - `FIGURES.md` — все графики с подписями и легендой (название, обоснование, описание)
 - `REPORT.md` — отчёт проделанной работы: все графики, метрики и пояснения по требованиям кейса
 - `solution.ipynb` — решение с пояснениями, графиками и метриками
