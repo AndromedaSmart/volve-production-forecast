@@ -26,137 +26,46 @@ else:
 
 subprocess.check_call([
     sys.executable, "-m", "pip", "install", "-q",
-    "pandas", "openpyxl", "scikit-learn", "matplotlib", "statsmodels", "scipy",
+    "pandas", "openpyxl", "scikit-learn", "matplotlib", "statsmodels", "scipy", "lightgbm",
 ])
 print("каталог:", Path.cwd())
 '''
 
-RUN = r'''import warnings
-warnings.filterwarnings("ignore")
+RUN = r'''# RECOMPUTE = True пересчитывает сравнение всех моделей (~5-10 минут, ставит torch + PyPOTS).
+# По умолчанию результаты сравнения читаются из reports/*.csv, а все графики строятся заново.
+RECOMPUTE = False
 
-from IPython.display import display
+import subprocess, sys
+pkgs = ["lightgbm", "tabulate", "python-docx"] + (["pypots"] if RECOMPUTE else [])
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", *pkgs])
+cmd = [sys.executable, "run_all.py"] + (["--recompute"] if RECOMPUTE else [])
+print(subprocess.run(cmd, capture_output=True, text=True).stdout[-3000:])
+'''
 
-import matplotlib
-matplotlib.use("Agg")
-import numpy as np
-import pandas as pd
+TABLES = r'''import pandas as pd
+from IPython.display import Markdown, display
+pd.set_option("display.precision", 1)
 
-from src.config import FIGURES_DIR, GAS_PROFILE_VARIANT, OIL_PROFILE_VARIANT, WINDOWS
-from src.data import load_daily, load_monthly, monthly_field
-from src.evaluate import evaluate_windows
-from src.metrics import regression_report
-from src.models import FieldForecaster, forecast_arps
-from src.plots import (
-    plot_compare_arps_ml,
-    plot_decomposition,
-    plot_errors,
-    plot_field_history,
-    plot_forecast_vs_actual,
-    plot_wells,
-)
-from statsmodels.tsa.seasonal import seasonal_decompose
-from statsmodels.tsa.stattools import adfuller
-
-FIGURES_DIR.mkdir(exist_ok=True)
-
-daily = load_daily()
-monthly = load_monthly()
-field = monthly_field(monthly)
-
-plot_field_history(field, WINDOWS, OIL_PROFILE_VARIANT, "oil", "profile_oil_window2.png")
-plot_field_history(field, WINDOWS, GAS_PROFILE_VARIANT, "gas", "profile_gas_window4.png")
-plot_wells(monthly, "wells_oil_decline.png")
-
-oil = field.set_index("DATE")["oil"].asfreq("MS").fillna(0)
-decomp = seasonal_decompose(oil, model="additive", period=12)
-plot_decomposition(decomp, "Декомпозиция месячной добычи нефти", "stl_oil.png")
-_, adf_p, *_ = adfuller(oil.dropna())
-
-metrics, summary, details = evaluate_windows(field, monthly)
-
-for item in details:
-    win, result, actual = item["window"], item["result"], item["actual"]
-    for fluid in ("oil", "gas"):
-        plot_forecast_vs_actual(actual, result, fluid, win.variant, f"w{win.variant}_{fluid}_fact_pred.png")
-        pred = result.oil if fluid == "oil" else result.gas
-        plot_errors(actual, pred, result.dates, fluid, win.variant, f"w{win.variant}_{fluid}")
-        if win.variant == 2 and fluid == "oil":
-            arps = forecast_arps(field.loc[field["DATE"] <= win.train_end, "oil"], 6)
-            plot_compare_arps_ml(
-                actual.set_index("DATE")["oil"].reindex(result.dates).fillna(0),
-                result.dates,
-                arps,
-                result.oil,
-                "Окно 2, нефть: факт vs Арпс vs модель",
-                "window2_oil_arps_vs_ml.png",
-            )
-
-well = monthly.loc[monthly["WELL"] == "15/9-F-12"].copy()
-well_field = well.rename(columns={"OIL": "oil", "GAS": "gas", "WATER": "water", "ON_STREAM_HRS": "on_stream"})
-well_field["n_producers"] = 1
-well_field["n_wells"] = 1
-well_field["gi"] = 0.0
-well_field["wi"] = 0.0
-res = FieldForecaster().fit_predict(well_field, well, "2014-12-01")
-future = well_field.set_index("DATE")["oil"].reindex(res.dates).fillna(0)
-plot_compare_arps_ml(
-    future,
-    res.dates,
-    forecast_arps(well_field.loc[well_field["DATE"] <= "2014-12-01", "oil"], 6),
-    res.oil,
-    "15/9-F-12: факт vs Арпс vs ML, 2015 H1",
-    "well_f12_2015.png",
-)
-
-print("ADF p-value:", round(float(adf_p), 4))
-display(summary)
-display(metrics)
+display(Markdown("## Итоговая модель: выбранный подход по окнам (автовыбор по внутренней валидации)"))
+display(pd.read_csv("reports/final_model_choice.csv"))
+display(Markdown("## Сравнение подходов: WAPE по окнам и RMS WAPE, %"))
+display(pd.read_csv("reports/experiments_summary.csv"))
+display(Markdown("## Цена утечки: подбор alpha на тесте vs на истории"))
+display(pd.read_csv("reports/experiments_leakage.csv"))
+display(Markdown("## Аномалии данных и решения"))
+display(pd.read_csv("reports/data_quality.csv"))
 '''
 
 SHOW = r'''from IPython.display import Image, Markdown, display
+from src.album import album, context
 
-ALBUM = [
-    ("G1. Месячный профиль нефти, окно 2", "figures/profile_oil_window2.png"),
-    ("G2. Месячный профиль газа, окно 4", "figures/profile_gas_window4.png"),
-    ("G3. Кривые падения нефти по стволам", "figures/wells_oil_decline.png"),
-    ("G4. Декомпозиция ряда нефти", "figures/stl_oil.png"),
-    ("G5. Нефть, окно 2: факт, Арпс и модель", "figures/window2_oil_arps_vs_ml.png"),
-    ("G6. Скважина 15/9-F-12, 2015 H1", "figures/well_f12_2015.png"),
-    ("G7. Нефть, окно 1: факт и прогноз", "figures/w1_oil_fact_pred.png"),
-    ("G8. Нефть, окно 1: абсолютная ошибка", "figures/w1_oil_abs.png"),
-    ("G9. Нефть, окно 1: относительная ошибка", "figures/w1_oil_rel.png"),
-    ("G10. Газ, окно 1: факт и прогноз", "figures/w1_gas_fact_pred.png"),
-    ("G11. Газ, окно 1: абсолютная ошибка", "figures/w1_gas_abs.png"),
-    ("G12. Газ, окно 1: относительная ошибка", "figures/w1_gas_rel.png"),
-    ("G13. Нефть, окно 2: факт и прогноз", "figures/w2_oil_fact_pred.png"),
-    ("G14. Нефть, окно 2: абсолютная ошибка", "figures/w2_oil_abs.png"),
-    ("G15. Нефть, окно 2: относительная ошибка", "figures/w2_oil_rel.png"),
-    ("G16. Газ, окно 2: факт и прогноз", "figures/w2_gas_fact_pred.png"),
-    ("G17. Газ, окно 2: абсолютная ошибка", "figures/w2_gas_abs.png"),
-    ("G18. Газ, окно 2: относительная ошибка", "figures/w2_gas_rel.png"),
-    ("G19. Нефть, окно 3: факт и прогноз", "figures/w3_oil_fact_pred.png"),
-    ("G20. Нефть, окно 3: абсолютная ошибка", "figures/w3_oil_abs.png"),
-    ("G21. Нефть, окно 3: относительная ошибка", "figures/w3_oil_rel.png"),
-    ("G22. Газ, окно 3: факт и прогноз", "figures/w3_gas_fact_pred.png"),
-    ("G23. Газ, окно 3: абсолютная ошибка", "figures/w3_gas_abs.png"),
-    ("G24. Газ, окно 3: относительная ошибка", "figures/w3_gas_rel.png"),
-    ("G25. Нефть, окно 4: факт и прогноз", "figures/w4_oil_fact_pred.png"),
-    ("G26. Нефть, окно 4: абсолютная ошибка", "figures/w4_oil_abs.png"),
-    ("G27. Нефть, окно 4: относительная ошибка", "figures/w4_oil_rel.png"),
-    ("G28. Газ, окно 4: факт и прогноз", "figures/w4_gas_fact_pred.png"),
-    ("G29. Газ, окно 4: абсолютная ошибка", "figures/w4_gas_abs.png"),
-    ("G30. Газ, окно 4: относительная ошибка", "figures/w4_gas_rel.png"),
-    ("G31. Нефть, окно 5: факт и прогноз", "figures/w5_oil_fact_pred.png"),
-    ("G32. Нефть, окно 5: абсолютная ошибка", "figures/w5_oil_abs.png"),
-    ("G33. Нефть, окно 5: относительная ошибка", "figures/w5_oil_rel.png"),
-    ("G34. Газ, окно 5: факт и прогноз", "figures/w5_gas_fact_pred.png"),
-    ("G35. Газ, окно 5: абсолютная ошибка", "figures/w5_gas_abs.png"),
-    ("G36. Газ, окно 5: относительная ошибка", "figures/w5_gas_rel.png"),
-]
-
-for title, path in ALBUM:
-    display(Markdown(f"### {title}"))
-    display(Image(filename=path))
+section = None
+for f in album(context()):
+    if f["section"] != section:
+        section = f["section"]
+        display(Markdown(f"## {section}"))
+    display(Markdown(f"### {f['id']}. {f['title']}\n\n{f['caption']}"))
+    display(Image(filename=f["file"]))
 '''
 
 
@@ -171,17 +80,20 @@ def main() -> None:
         nbf.v4.new_markdown_cell(
             """# Volve: прогноз добычи нефти и газа
 
-Краткая тетрадка для Google Colab. Данные и код берутся из репозитория, затем считаются метрики и выводятся **все 36 графиков**.
+Тетрадка для Google Colab (версия 2). Код и данные берутся из репозитория, затем строятся **все графики итогового отчёта**: методология и предобработка, сравнение ML-подходов (Ridge, LightGBM, Арпс, Transformer и CSDI из PyPOTS), подбор гиперпараметров без утечки, прогнозы итоговой модели по 5 окнам.
 
 1. Откройте **Runtime → Run all**.
-2. Дождитесь клонирования репозитория и расчёта (обычно 1–2 минуты).
-3. Ниже появятся таблицы MAE / MAPE / WAPE и рисунки G1–G36.
+2. Дождитесь клонирования и расчёта (1–2 минуты; с `RECOMPUTE = True` — дольше).
+3. Ниже появятся таблицы и рисунки G1–G49 с подписями.
+
+Подробная методология — `METHODOLOGY.md`, Word-отчёт — `docs/report.docx`.
 
 Репозиторий: https://github.com/AndromedaSmart/volve-production-forecast
 """
         ),
         nbf.v4.new_code_cell(CLONE),
         nbf.v4.new_code_cell(RUN),
+        nbf.v4.new_code_cell(TABLES),
         nbf.v4.new_code_cell(SHOW),
     ]
     nbf.write(nb, NB_PATH)

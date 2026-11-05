@@ -16,8 +16,12 @@ from statsmodels.tsa.seasonal import seasonal_decompose
 from statsmodels.tsa.stattools import adfuller
 
 from src.config import FIGURES_DIR, GAS_PROFILE_VARIANT, OIL_PROFILE_VARIANT, REPORTS_DIR, WINDOWS
-from src.data import load_daily, load_monthly, monthly_field, well_summary
+import argparse
+
+from src.data import daily_quality_report, load_daily, load_monthly, monthly_field, well_summary
 from src.evaluate import evaluate_windows
+from src.experiments import load_experiment, run_experiments, save_experiment, summary_table
+from src import plots_v2
 from src.models import forecast_arps
 from src.plots import (
     plot_compare_arps_ml,
@@ -32,6 +36,10 @@ warnings.filterwarnings("ignore")
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--recompute", action="store_true", help="пересчитать сравнение моделей (долго из-за PyPOTS)")
+    ap.add_argument("--no-deep", action="store_true", help="без Transformer/CSDI при пересчёте")
+    args = ap.parse_args()
     FIGURES_DIR.mkdir(exist_ok=True)
     REPORTS_DIR.mkdir(exist_ok=True)
 
@@ -52,7 +60,27 @@ def main() -> None:
     plt.close("all")
     adf_stat, adf_p, *_ = adfuller(oil.dropna())
 
-    metrics, summary, details = evaluate_windows(field, monthly)
+    daily_quality_report(daily).to_csv(REPORTS_DIR / "data_quality.csv", index=False)
+    if args.recompute or not (REPORTS_DIR / "experiments_predictions.csv").exists():
+        exp = run_experiments(field, monthly, with_deep=not args.no_deep, verbose=True)
+        save_experiment(exp, REPORTS_DIR)
+    exp = load_experiment(REPORTS_DIR)
+    plots_v2.plot_pipeline()
+    plots_v2.plot_preprocessing(daily, field)
+    plots_v2.plot_rate_series(field)
+    plots_v2.plot_gor(field)
+    plots_v2.plot_model_comparison(exp.rows, exp.auto)
+    plots_v2.plot_heatmap(exp.rows, "oil", "heatmap_oil.png")
+    plots_v2.plot_heatmap(exp.rows, "gas", "heatmap_gas.png")
+    plots_v2.plot_leakage(exp.leak)
+    plots_v2.plot_inner_vs_test(exp.rows)
+    plots_v2.plot_tuning_curves(exp.tuning)
+    plots_v2.plot_window_models(exp, "oil", "windows_models_oil.png")
+    plots_v2.plot_window_models(exp, "gas", "windows_models_gas.png")
+    plots_v2.plot_gas_routes(exp)
+    plt.close("all")
+
+    metrics, summary, details = evaluate_windows(field, monthly, exp)
     metrics.to_csv(REPORTS_DIR / "metrics_windows.csv", index=False)
     summary.to_csv(REPORTS_DIR / "metrics_summary.csv", index=False)
 
@@ -75,6 +103,21 @@ def main() -> None:
                     "window2_oil_arps_vs_ml.png",
                 )
         plt.close("all")
+
+    well = monthly.loc[monthly["WELL"] == "15/9-F-12"].copy()
+    wf = well.rename(columns={"OIL": "oil", "GAS": "gas", "WATER": "water", "ON_STREAM_HRS": "on_stream"})
+    wf = wf.assign(n_producers=1, n_wells=1, gi=0.0, wi=0.0, prod_hours=wf["on_stream"]).reset_index(drop=True)
+    from src.experiments import forecast_fluid, tune
+
+    hist_w = wf.loc[wf["DATE"] <= "2014-12-01"]
+    fut_w = wf.set_index("DATE").reindex(pd.date_range("2015-01-01", periods=6, freq="MS"))
+    params, _, _ = tune(wf, hist_w, "oil", "rate", "lgbm")
+    pred_w = forecast_fluid(hist_w, fut_w["prod_hours"].fillna(0).to_numpy(), "oil", ("rate", "lgbm", params, "direct"))
+    plot_compare_arps_ml(
+        fut_w["oil"].fillna(0), fut_w.index, forecast_arps(hist_w["oil"], 6), pred_w,
+        "15/9-F-12: факт vs Арпс vs LightGBM (удельный дебит), 2015 H1", "well_f12_2015.png",
+    )
+    plt.close("all")
 
     oil_rms = float(summary.loc[summary["fluid"] == "oil", "RMS_WAPE"].iloc[0])
     gas_rms = float(summary.loc[summary["fluid"] == "gas", "RMS_WAPE"].iloc[0])

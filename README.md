@@ -4,18 +4,24 @@ Jupyter-тетрадка и модель для кейса: по истории 
 
 Данные: Volve (Норвегия, 2007–2016), файл `data/data.xlsx`.
 
-## Результат на контрольных окнах
+## Результат на контрольных окнах (версия 2)
 
-| Флюид | RMS WAPE |
-|---|---|
-| нефть | 26.5% |
-| газ | 23.6% |
+Гиперпараметры и выбор подхода — только по истории до даты отсечения (вложенный rolling-origin), контрольные окна используются только для оценки.
 
-Полный отчёт с графиками и таблицами по требованиям кейса: **[REPORT.md](REPORT.md)**.  
-Альбом всех рисунков с подписями и легендой: **[FIGURES.md](FIGURES.md)**.  
-Запуск в браузере: **[открыть в Google Colab](https://colab.research.google.com/github/AndromedaSmart/volve-production-forecast/blob/master/colab.ipynb)**.
+| | Нефть, RMS WAPE | Газ, RMS WAPE |
+|---|---|---|
+| Итоговая модель (автовыбор по внутренней валидации) | 41.6% | 39.4% |
+| Лучший одиночный подход: Ridge + плановые часы как признак | 29.6% | 28.7% |
+| LightGBM по объёму | 36.7% | 29.9% |
+| Transformer / CSDI (PyPOTS) — лучший вариант | 41.1% | 41.0% |
+| v1 (Ridge, параметры подбирались на тех же окнах) | 26.5% | 23.6% |
 
-Полная таблица MAE / MAPE / WAPE — в `reports/metrics_windows.csv` и в `solution.ipynb`.
+Оценка v1 была занижена утечкой: для Ridge при честном подборе alpha RMS WAPE нефти растёт с 27.9% до 49.0%.
+
+- Отчёт: **[REPORT.md](REPORT.md)**, подробная методология: **[METHODOLOGY.md](METHODOLOGY.md)**
+- Word-отчёт со всеми графиками: **[docs/report.docx](docs/report.docx)**
+- Альбом рисунков G1–G49 с легендой: **[FIGURES.md](FIGURES.md)**
+- Запуск в браузере: **[открыть в Google Colab](https://colab.research.google.com/github/AndromedaSmart/volve-production-forecast/blob/master/colab.ipynb)**
 
 ## Как запустить
 
@@ -37,22 +43,27 @@ jupyter notebook solution.ipynb
 
 https://colab.research.google.com/github/AndromedaSmart/volve-production-forecast/blob/master/colab.ipynb
 
-Пакетный прогон графиков и метрик:
+Пакетный прогон графиков и метрик (сравнение моделей читается из `reports/*.csv`):
 
 ```bash
-python run_all.py
+python run_all.py                # все графики
+python run_all.py --recompute    # пересчитать сравнение всех моделей (нужны torch и pypots)
+python run_all.py --recompute --no-deep   # без Transformer/CSDI
+python build_report.py           # docs/report.docx, FIGURES.md, METHODOLOGY.md, REPORT.md
+python build_colab_notebook.py   # colab.ipynb
 ```
 
 Прогноз из кода:
 
 ```python
 from src.data import load_monthly, monthly_field
-from src.models import FieldForecaster
+from src.experiments import forecast_fluid, tune
 
-monthly = load_monthly()
-field = monthly_field(monthly)
-forecast = FieldForecaster().fit_predict(field, monthly, cutoff="2015-12-01")
-forecast.oil, forecast.gas
+field = monthly_field(load_monthly())
+hist = field[field["DATE"] <= "2015-12-01"]
+plan_hours = [3000] * 6                     # плановые часы добывающих стволов на 6 мес.
+params, inner_wape, _ = tune(field, hist, "oil", "volume_hours", "ridge")   # подбор только на истории
+oil = forecast_fluid(hist, plan_hours, "oil", ("volume_hours", "ridge", params, "direct"))
 ```
 
 ## Что внутри
@@ -61,9 +72,12 @@ forecast.oil, forecast.gas
 - `FIGURES.md` — все графики с подписями и легендой (название, обоснование, описание)
 - `REPORT.md` — отчёт проделанной работы: все графики, метрики и пояснения по требованиям кейса
 - `solution.ipynb` — решение с пояснениями, графиками и метриками
-- `src/` — загрузка данных, признаки, модель, оценка
+- `src/data.py` — загрузка, очистка, часы добывающих стволов, отчёт об аномалиях
+- `src/experiments.py` — сравнение подходов (наивная, Арпс, Ridge, LightGBM, Transformer, CSDI), вложенный подбор гиперпараметров, автовыбор итоговой модели
+- `src/plots_v2.py`, `src/album.py` — графики версии 2 и единый список рисунков
+- `src/models.py` — модель версии 1 (для сравнения)
 - `figures/` — графики профилей, ошибок и сравнения с кривой Арпса
 - `reports/NOTE.md` — краткая пояснительная записка
 - `docs/` — исходная постановка кейса
 
-Модель берёт только историю до даты отсечения. На коротком ряде (окно 1) это смесь кривой Арпса и устойчивого уровня добычи, на более длинной истории — Ridge с лагами 1/2/3/6 месяцев.
+Модель берёт только историю до даты отсечения; и обучение, и подбор гиперпараметров, и выбор подхода выполняются на этой истории.

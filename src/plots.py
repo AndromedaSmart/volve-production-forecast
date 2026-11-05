@@ -36,7 +36,7 @@ def _save(fig: plt.Figure, name: str) -> Path:
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     path = FIGURES_DIR / name
     fig.tight_layout()
-    fig.savefig(path)
+    fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -78,7 +78,9 @@ def plot_forecast_vs_actual(
     ax.plot(actual["DATE"], actual[fluid], marker="o", color="#1f4e79", lw=2, label="Факт")
     ax.plot(result.dates, pred, marker="s", color="#c45911", lw=2, label="Прогноз")
     ax.fill_between(result.dates, lo, hi, color="#c45911", alpha=0.18, label="Интервал ~90%")
-    ax.set_title(f"Факт vs прогноз, {fluid}, окно {variant}")
+    name_ru = {"oil": "нефть", "gas": "газ"}[fluid]
+    model = result.model_oil if fluid == "oil" else result.model_gas
+    ax.set_title(f"Факт vs прогноз, {name_ru}, окно {variant}\nмодель: {model}", fontsize=11)
     ax.set_ylabel(FLUID_LABELS[fluid])
     ax.legend()
     return _save(fig, name)
@@ -93,13 +95,13 @@ def plot_errors(
 
     fig, ax = plt.subplots(figsize=(11, 3.8))
     ax.bar(dates, abs_err, width=20, color="#2e75b6")
-    ax.set_title(f"Абсолютная ошибка, {fluid}, окно {variant}")
+    ax.set_title(f"Абсолютная ошибка, {dict(oil='нефть', gas='газ')[fluid]}, окно {variant}")
     ax.set_ylabel("ст. м³")
     p1 = _save(fig, f"{prefix}_abs.png")
 
     fig, ax = plt.subplots(figsize=(11, 3.8))
     ax.bar(dates, rel_err, width=20, color="#c45911")
-    ax.set_title(f"Относительная ошибка, {fluid}, окно {variant}")
+    ax.set_title(f"Относительная ошибка, {dict(oil='нефть', gas='газ')[fluid]}, окно {variant}")
     ax.set_ylabel("%")
     p2 = _save(fig, f"{prefix}_rel.png")
     return p1, p2
@@ -116,7 +118,7 @@ def plot_compare_arps_ml(
     fig, ax = plt.subplots(figsize=(11, 4.6))
     ax.plot(dates, actual.to_numpy(), marker="o", lw=2, label="Факт")
     ax.plot(dates, arps, marker="^", lw=2, label="Арпс")
-    ax.plot(dates, ml, marker="s", lw=2, label="ML")
+    ax.plot(dates, ml, marker="s", lw=2, label="Итоговая модель")
     ax.set_title(title)
     ax.legend()
     return _save(fig, name)

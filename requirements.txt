@@ -9,3 +9,9 @@ scipy==1.10.1
 nbformat==5.10.4
 nbclient==0.10.0
 ipykernel==6.29.5
+lightgbm>=4.0
+python-docx>=1.1
+tabulate>=0.9
+# для пересчёта глубоких моделей (run_all.py --recompute):
+# torch
+# pypots>=1.0

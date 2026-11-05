@@ -139,8 +139,14 @@ def monthly_field(monthly: pd.DataFrame) -> pd.DataFrame:
     )
     producers = monthly.loc[monthly["OIL"] + monthly["GAS"] > 0]
     n_prod = producers.groupby("DATE")["WELL"].nunique().rename("n_producers")
-    grouped = grouped.merge(n_prod, on="DATE", how="left")
+    # Часы только добывающих стволов: часы нагнетательных F-4/F-5 в месяцы без
+    # добычи не должны попадать в знаменатель удельного дебита.
+    prod_hours = producers.groupby("DATE")["ON_STREAM_HRS"].sum().rename("prod_hours")
+    grouped = grouped.merge(n_prod, on="DATE", how="left").merge(prod_hours, on="DATE", how="left")
     grouped["n_producers"] = grouped["n_producers"].fillna(0).astype(int)
+    grouped["prod_hours"] = grouped["prod_hours"].fillna(0.0)
+    for fl in ("oil", "gas", "water"):
+        grouped[f"{fl}_rate"] = np.where(grouped["prod_hours"] > 0, grouped[fl] / grouped["prod_hours"].clip(lower=1.0), np.nan)
     grouped["gor"] = np.where(grouped["oil"] > 0, grouped["gas"] / grouped["oil"], np.nan)
     grouped["water_cut"] = np.where(
         grouped["oil"] + grouped["water"] > 0,
@@ -184,3 +190,44 @@ def complete_month_index(df: pd.DataFrame, date_col: str = "DATE") -> pd.DataFra
     out = df.set_index(date_col).reindex(idx)
     out.index.name = date_col
     return out.reset_index()
+
+
+def daily_quality_report(daily: pd.DataFrame) -> pd.DataFrame:
+    """Аномалии суточного листа и принятое решение по каждой."""
+    rows = []
+    over = daily.loc[daily["ON_STREAM_HRS"] > 24]
+    dst = over["DATEPRD"].apply(_is_dst_end)
+    rows.append({
+        "issue": "ON_STREAM_HRS > 24",
+        "rows": int(len(over)),
+        "detail": f"все {int(dst.sum())} из {len(over)} — последнее воскресенье октября (переход на зимнее время, сутки = 25 ч)",
+        "decision": "оставить как есть: сутки реально длились 25 ч; удельный дебит считается делением на фактические часы",
+    })
+    neg = daily.loc[daily["BORE_WAT_VOL"] < 0]
+    rows.append({
+        "issue": "BORE_WAT_VOL < 0",
+        "rows": int(len(neg)),
+        "detail": "; ".join(f"{r.WELL} {r.DATEPRD:%Y-%m-%d}: {r.BORE_WAT_VOL:.1f}" for r in neg.itertuples()),
+        "decision": "учётные корректировки аллокации; в месячном листе уже свернуты в месячную сумму (расхождение 0), отрицательных месячных значений нет; вода используется только как лаговый признак",
+    })
+    for col in ("BORE_OIL_VOL", "BORE_GAS_VOL"):
+        rows.append({"issue": f"{col} < 0", "rows": int((daily[col] < 0).sum()), "detail": "-", "decision": "-"})
+    rows.append({
+        "issue": "часы нагнетательных стволов",
+        "rows": int(((daily["WELL_TYPE"] == "WI")).sum()),
+        "detail": "F-4 и F-5 работают как нагнетательные; их часы раньше попадали в часы месторождения",
+        "decision": "в prod_hours учитываются только стволы с добычей нефти/газа в месяце",
+    })
+    rows.append({
+        "issue": "простои (ON_STREAM_HRS = 0)",
+        "rows": int((daily["ON_STREAM_HRS"] == 0).sum()),
+        "detail": "скважина не работала",
+        "decision": "не интерполируются; в подходе 'удельный дебит' нормируются делением на часы",
+    })
+    return pd.DataFrame(rows)
+
+
+def _is_dst_end(ts: pd.Timestamp) -> bool:
+    if ts.month != 10 or ts.weekday() != 6:
+        return False
+    return (ts + pd.Timedelta(days=7)).month == 11
