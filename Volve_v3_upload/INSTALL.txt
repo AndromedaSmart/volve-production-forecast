@@ -1,0 +1,4 @@
+Загрузка в ветку v3-direct-forecast (GitHub): Add file -> Upload files.
+Куда: reports/v3/ (Volve_v3_report.docx, Volve_v3_metrics.xlsx, figures/*.png, *.csv).
+volve_v3.py и docs/V3_README.md уже в ветке (коммит 46aa216).
+Пересчёт: python volve_v3.py --data data/data.xlsx --out reports/v3

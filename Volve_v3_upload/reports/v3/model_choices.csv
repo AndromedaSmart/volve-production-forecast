@@ -1,0 +1,45 @@
+window,fluid,scope,selected,alpha,inner_wape,n_folds,history_months,fallback
+1,oil,field,mean6,,,0,23,True
+1,oil,15/9-F-12,mean6,,,0,23,True
+1,oil,15/9-F-14,mean6,,,0,18,True
+1,gas,field,mean6,,,0,23,True
+1,gas,15/9-F-12,mean6,,,0,23,True
+1,gas,15/9-F-14,mean6,,,0,18,True
+2,oil,field,ridge_wnf,100.0,22.04095716417686,3,47,False
+2,oil,15/9-F-12,ridge_wnf,100.0,33.64926611947316,3,47,False
+2,oil,15/9-F-14,ridge_wnf,100.0,19.49833406305936,3,42,False
+2,gas,field,ridge_wnf,100.0,22.84996161189885,3,47,False
+2,gas,15/9-F-12,ridge_wnf,100.0,32.203955994615406,3,47,False
+2,gas,15/9-F-14,ridge_wnf,100.0,21.062731096844313,3,42,False
+3,oil,field,mean6,,31.667330991245397,3,71,False
+3,oil,15/9-F-11,mean6,,,0,6,True
+3,oil,15/9-F-12,ridge_wnf,100.0,27.803702878838227,3,71,False
+3,oil,15/9-F-14,ridge,10.0,19.648666085216345,3,66,False
+3,gas,field,mean6,,30.106768424416135,3,71,False
+3,gas,15/9-F-11,mean6,,,0,6,True
+3,gas,15/9-F-12,ridge_wnf,100.0,29.469727634839813,3,71,False
+3,gas,15/9-F-14,ridge,10.0,22.637831847993386,3,66,False
+4,oil,field,median6,,26.608047162947145,3,83,False
+4,oil,15/9-F-1 C,mean6,,,0,9,True
+4,oil,15/9-F-11,mean6,,,0,18,True
+4,oil,15/9-F-12,ridge_wnf,100.0,27.463619939725902,3,83,False
+4,oil,15/9-F-14,ridge,1.0,9.912558113052022,3,78,False
+4,oil,15/9-F-15 D,mean6,,,0,12,True
+4,gas,field,median6,,22.998336572656655,3,83,False
+4,gas,15/9-F-1 C,mean6,,,0,9,True
+4,gas,15/9-F-11,mean6,,,0,18,True
+4,gas,15/9-F-12,ridge_wnf,10.0,28.150660157935622,3,83,False
+4,gas,15/9-F-14,ridge_wnf,10.0,9.832868084007357,3,78,False
+4,gas,15/9-F-15 D,mean6,,,0,12,True
+5,oil,field,median6,,31.842968815685282,3,95,False
+5,oil,15/9-F-1 C,mean6,,,0,21,True
+5,oil,15/9-F-11,mean6,,31.137969270778253,2,30,False
+5,oil,15/9-F-12,ridge,1.0,46.20357772389707,3,95,False
+5,oil,15/9-F-14,ridge_wnf,10.0,9.23518440275439,3,90,False
+5,oil,15/9-F-15 D,ridge_wnf,10.0,29.27938574585797,1,24,False
+5,gas,field,median6,,27.315918957866938,3,95,False
+5,gas,15/9-F-1 C,mean6,,,0,21,True
+5,gas,15/9-F-11,mean6,,28.13701095608188,2,30,False
+5,gas,15/9-F-12,ridge,1.0,45.656778416138884,3,95,False
+5,gas,15/9-F-14,ridge,1.0,9.20050752627811,3,90,False
+5,gas,15/9-F-15 D,median6,,31.626837691783138,1,24,False
