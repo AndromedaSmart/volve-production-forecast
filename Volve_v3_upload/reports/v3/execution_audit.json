@@ -1,0 +1,8 @@
+{
+  "input_sha256": "a1d032d1fe67abae07047246ef112ed1ec1241e5d8c98e8706744aa79fa505d8",
+  "monthly_rows": 526,
+  "windows": 5,
+  "scenario": "history_only + separate oracle",
+  "archive_plan_available": false,
+  "legacy_models_recomputed": false
+}

@@ -1,0 +1,61 @@
+window,fluid,WELL,status,test_volume
+1,oil,15/9-F-1 C,unseen_or_insufficient_history,0.0
+1,oil,15/9-F-11,unseen_or_insufficient_history,0.0
+1,oil,15/9-F-12,included,587240.98
+1,oil,15/9-F-14,included,447458.3900000001
+1,oil,15/9-F-15 D,unseen_or_insufficient_history,0.0
+1,oil,15/9-F-5,unseen_or_insufficient_history,0.0
+1,gas,15/9-F-1 C,unseen_or_insufficient_history,0.0
+1,gas,15/9-F-11,unseen_or_insufficient_history,0.0
+1,gas,15/9-F-12,included,82919774.26
+1,gas,15/9-F-14,included,63269698.7
+1,gas,15/9-F-15 D,unseen_or_insufficient_history,0.0
+1,gas,15/9-F-5,unseen_or_insufficient_history,0.0
+2,oil,15/9-F-1 C,unseen_or_insufficient_history,0.0
+2,oil,15/9-F-11,unseen_or_insufficient_history,0.0
+2,oil,15/9-F-12,included,139650.87
+2,oil,15/9-F-14,included,202079.77999999997
+2,oil,15/9-F-15 D,unseen_or_insufficient_history,0.0
+2,oil,15/9-F-5,unseen_or_insufficient_history,0.0
+2,gas,15/9-F-1 C,unseen_or_insufficient_history,0.0
+2,gas,15/9-F-11,unseen_or_insufficient_history,0.0
+2,gas,15/9-F-12,included,22180439.02
+2,gas,15/9-F-14,included,31281935.35
+2,gas,15/9-F-15 D,unseen_or_insufficient_history,0.0
+2,gas,15/9-F-5,unseen_or_insufficient_history,0.0
+3,oil,15/9-F-1 C,unseen_or_insufficient_history,55662.17999999999
+3,oil,15/9-F-11,included,200192.38
+3,oil,15/9-F-12,included,32815.21
+3,oil,15/9-F-14,included,89874.80000000002
+3,oil,15/9-F-15 D,unseen_or_insufficient_history,42049.16
+3,oil,15/9-F-5,unseen_or_insufficient_history,0.0
+3,gas,15/9-F-1 C,unseen_or_insufficient_history,7980827.99
+3,gas,15/9-F-11,included,29683748.25
+3,gas,15/9-F-12,included,4924236.65
+3,gas,15/9-F-14,included,13078141.739999998
+3,gas,15/9-F-15 D,unseen_or_insufficient_history,6214011.630000001
+3,gas,15/9-F-5,unseen_or_insufficient_history,0.0
+4,oil,15/9-F-1 C,included,40442.76
+4,oil,15/9-F-11,included,257041.29
+4,oil,15/9-F-12,included,120961.87
+4,oil,15/9-F-14,included,45273.74
+4,oil,15/9-F-15 D,included,26673.95
+4,oil,15/9-F-5,unseen_or_insufficient_history,0.0
+4,gas,15/9-F-1 C,included,5952177.35
+4,gas,15/9-F-11,included,37761582.650000006
+4,gas,15/9-F-12,included,17823288.96
+4,gas,15/9-F-14,included,6698027.070000001
+4,gas,15/9-F-15 D,included,3936338.38
+4,gas,15/9-F-5,unseen_or_insufficient_history,0.0
+5,oil,15/9-F-1 C,included,12288.66
+5,oil,15/9-F-11,included,126129.85
+5,oil,15/9-F-12,included,41924.63999999999
+5,oil,15/9-F-14,included,21702.269999999997
+5,oil,15/9-F-15 D,included,24454.890000000003
+5,oil,15/9-F-5,unseen_or_insufficient_history,22246.489999999998
+5,gas,15/9-F-1 C,included,1965059.0899999999
+5,gas,15/9-F-11,included,20069537.479999997
+5,gas,15/9-F-12,included,6689864.32
+5,gas,15/9-F-14,included,3464068.91
+5,gas,15/9-F-15 D,included,3898812.8500000006
+5,gas,15/9-F-5,unseen_or_insufficient_history,3541872.84
