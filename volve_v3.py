@@ -1,6 +1,5 @@
 """Volve v3: direct horizons, nested selection, history-only vs oracle.
-Run: python volve_v3.py --data data/data.xlsx
-Legacy v1/v2 modules are intentionally unchanged.
+Run: python volve_v3.py --data data/data.xlsx --out reports/v3
 """
 from pathlib import Path
 import argparse, hashlib, json
@@ -12,6 +11,9 @@ from sklearn.preprocessing import StandardScaler
 
 WINDOWS=[(1,'2009-12-01'),(2,'2011-12-01'),(3,'2013-12-01'),(4,'2014-12-01'),(5,'2015-12-01')]
 CANDIDATES=[('mean6',None),('median6',None),('last',None)]+[(m,a) for m in ('ridge','ridge_wnf') for a in (1.,10.,100.)]
+LABELS={'auto_inner':'Автовыбор','mean6':'Среднее 6 мес.','median6':'Медиана 6 мес.','ridge_a10':'Ridge alpha=10','ridge_wnf_a10':'Ridge + log1p(вода/нефть)','well_auto':'Скважинный автовыбор','well_mean6':'Скважинное среднее','well_median6':'Скважинная медиана','rate6_median_hours':'Дебит × медиана часов','rate6_oracle':'Дебит × факт. часы (oracle)'}
+FL={'oil':'Нефть','gas':'Газ'}
+MODEL_RU={'mean6':'среднее 6 мес.','median6':'медиана 6 мес.','last':'последнее значение','ridge':'Ridge','ridge_wnf':'Ridge + log1p(вода/нефть)'}
 
 def wape(y,p):
     y,p=np.asarray(y,float),np.asarray(p,float)
@@ -138,7 +140,116 @@ def summarize(pr):
     summ=met.groupby(keys[1:]).WAPE.agg(lambda x:float(np.sqrt(np.mean(x.to_numpy()**2))) if len(x)==5 and x.notna().all() else np.nan).rename('RMS_WAPE').reset_index()
     return met,summ
 
-def run(path='data/data.xlsx',dest='reports/v3'):
+def artifacts(frames,dest):
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from docx import Document
+    from docx.shared import Inches
+    plt.rcParams.update({'font.family':'DejaVu Sans','font.size':9})
+    pr=frames['predictions'];tr=frames['train_fitted'];met=frames['window_metrics'];summ=frames['summary'];ch=frames['model_choices']
+    pics=dest/'figures';pics.mkdir(exist_ok=True);manifest=[]
+    def save(fig,key,title,caption):
+        fig.tight_layout();fig.savefig(pics/(key+'.png'),dpi=145,bbox_inches='tight');plt.close(fig)
+        manifest.append(dict(id=key,title=title,caption=caption,file=key+'.png'))
+    base_style={'mean6':('#CE7E00','--','o',1.3),'median6':('#15856E','--','s',1.3),'well_median6':('#8C4BB1','--','^',1.3)}
+    for w in range(1,6):
+        for fl in ('oil','gas'):
+            scale=1e3 if fl=='oil' else 1e6;unit='тыс. ст. м³/мес.' if fl=='oil' else 'млн ст. м³/мес.'
+            g=pr.loc[(pr.window==w)&(pr.fluid==fl)]
+            sel=ch.loc[(ch.window==w)&(ch.fluid==fl)&(ch.scope=='field')].iloc[0]
+            alpha='' if pd.isna(sel.alpha) else f', alpha={sel.alpha:g}'
+            auto_label=f'Автовыбор: {MODEL_RU[sel.selected]}{alpha}'+(' (запасное правило: мало истории)' if sel.fallback else '')
+            auto=g.loc[g.model=='auto_inner'].sort_values('DATE')
+            twins=[n for n in base_style if np.allclose(g.loc[g.model==n].sort_values('DATE').pred.to_numpy(),auto.pred.to_numpy())]
+            fig,axs=plt.subplots(3,1,figsize=(12,8),sharex=True)
+            a=g.groupby('DATE').actual.first();axs[0].plot(a.index,a/scale,'ko-',lw=2,label='Факт',zorder=5)
+            for name,(color,ls,mk,lw) in base_style.items():
+                k=g.loc[g.model==name].sort_values('DATE')
+                for ax,col,s in zip(axs,('pred','absolute_error','absolute_relative_error_pct'),(scale,scale,1)):
+                    ax.plot(k.DATE,k[col]/s,ls=ls,marker=mk,color=color,lw=lw,ms=5,alpha=.8,label=LABELS[name] if ax is axs[0] else None,zorder=3)
+            for ax,col,s in zip(axs,('pred','absolute_error','absolute_relative_error_pct'),(scale,scale,1)):
+                ax.plot(auto.DATE,auto[col]/s,'-',marker='D',color='#185ABD',lw=3.4,ms=8,mec='white',mew=1.2,label=auto_label if ax is axs[0] else None,zorder=10)
+            score=met.loc[(met.window==w)&(met.fluid==fl)&(met.model=='auto_inner'),'WAPE'].iloc[0]
+            title=f'{FL[fl]}: окно {w}, прогноз и ошибки · WAPE автовыбора {score:.1f}%'
+            axs[0].set_title(title);axs[0].legend(fontsize=8,ncol=2,loc='best')
+            if twins:
+                axs[0].text(.01,.02,'Кривая автовыбора совпадает с: '+', '.join(LABELS[n] for n in twins)+' (на графике нарисована поверх)',transform=axs[0].transAxes,fontsize=8,color='#185ABD',bbox=dict(fc='white',ec='#185ABD',alpha=.9))
+            for ax,label in zip(axs,(unit,'Абсолютная ошибка, '+unit,'Абс. относительная ошибка, %')): ax.set_ylabel(label);ax.grid(alpha=.2)
+            fig.autofmt_xdate();save(fig,f'T{w}_{fl}',f'{FL[fl]}: прогноз и ошибки, окно {w}','Синяя жирная линия с ромбами — вариант автовыбора. Если он совпадает с фиксированным правилом, линии накладываются; это отмечено на графике. Только история.')
+            tg=tr.loc[(tr.window==w)&(tr.fluid==fl)&(tr.model=='auto_inner')]
+            fig,axs=plt.subplots(3,1,figsize=(12,7.5),sharex=True)
+            for h,k in tg.groupby('horizon'):
+                for ax,col,s in zip(axs,('error','absolute_error','absolute_relative_error_pct'),(scale,scale,1)): ax.plot(k.DATE,k[col]/s,label=f'h={h}',alpha=.7)
+            title=f'{FL[fl]}: окно {w}, обучающий период · {auto_label}';axs[0].set_title(title);axs[0].legend(ncol=6)
+            for ax,label in zip(axs,('Знаковая ошибка, '+unit,'Абсолютная ошибка, '+unit,'Абс. относительная ошибка, %')): ax.set_ylabel(label);ax.grid(alpha=.2)
+            fig.autofmt_xdate();save(fig,f'R{w}_{fl}',f'{FL[fl]}: ошибки на обучающем периоде, окно {w}','Ridge: in-sample подгонка. Для среднего/медианы — исторические ошибки правила. Не оценка будущей точности. Линии — горизонты 1…6.')
+    order=['auto_inner','mean6','median6','ridge_a10','ridge_wnf_a10','well_auto','well_median6','rate6_median_hours']
+    fig,axs=plt.subplots(1,2,figsize=(14,6))
+    for ax,fl in zip(axs,('oil','gas')):
+        z=summ.loc[(summ.fluid==fl)&(summ.scenario=='history_only')].set_index('model').reindex(order)
+        ax.barh(range(len(z)),z.RMS_WAPE,color=['#185ABD']+['#8B99AC']*(len(z)-1))
+        ax.set_yticks(range(len(z)),[LABELS[k] for k in order],fontsize=8);ax.invert_yaxis();ax.set_title(FL[fl]);ax.set_xlabel('RMS WAPE, %')
+        for i,v in enumerate(z.RMS_WAPE): ax.text(v+.4,i,f'{v:.1f}%',va='center')
+    save(fig,'S1_summary','Сравнение методов','RMS WAPE по пяти окнам; oracle исключён. Пять окон — ретроспективная проверка, не новый holdout.')
+    for fl in ('oil','gas'):
+        z=met.loc[(met.fluid==fl)&(met.scenario=='history_only')].pivot(index='model',columns='window',values='WAPE').reindex(order)
+        fig,ax=plt.subplots(figsize=(12,5));im=ax.imshow(z,aspect='auto',cmap='YlOrRd',vmin=0,vmax=100)
+        ax.set_yticks(range(len(z)),[LABELS[k] for k in order]);ax.set_xticks(range(5),range(1,6));ax.set_xlabel('Окно');ax.set_title(FL[fl])
+        for i in range(len(z)):
+            for j in range(5): ax.text(j,i,f'{z.iloc[i,j]:.1f}',ha='center',va='center')
+        fig.colorbar(im,ax=ax);save(fig,'S2_'+fl,FL[fl]+': WAPE по окнам','Числа — WAPE, %. Цвет ограничен 100%, значения могут быть выше.')
+    groups=[('S3_physical',['ridge_a10','ridge_wnf_a10','auto_inner'],'Проверка физического признака'),('S4_wells',['auto_inner','median6','well_auto','well_median6'],'Скважинное сравнение'),('S7_hours',['auto_inner','rate6_median_hours','rate6_oracle'],'История и oracle с фактическими часами')]
+    for key,names,title in groups:
+        fig,axs=plt.subplots(1,2,figsize=(12,5))
+        for ax,fl in zip(axs,('oil','gas')):
+            for name in names:
+                k=met.loc[(met.fluid==fl)&(met.model==name)].sort_values('window')
+                ax.plot(k.window,k.WAPE,'o-',label=LABELS[name],lw=3 if name=='auto_inner' else 1.5,zorder=10 if name=='auto_inner' else 3)
+            ax.set_title(FL[fl]);ax.set_xlabel('Окно');ax.set_ylabel('WAPE, %');ax.legend(fontsize=7);ax.grid(alpha=.2)
+        save(fig,key,title,'Oracle — не настоящий план. WAPE окна 5 oracle не определён из-за отсутствия часов F-1 C за май–июнь 2016. Физический признак нестабилен; универсальный выигрыш не подтверждён.')
+    cov=frames['coverage'];cv=[]
+    for (w,fl),g in cov.groupby(['window','fluid']): cv.append(dict(window=w,fluid=fl,uncovered_pct=100*g.loc[g.status!='included','test_volume'].sum()/g.test_volume.sum()))
+    cv=pd.DataFrame(cv);frames['coverage_summary']=cv
+    fig,ax=plt.subplots(figsize=(11,4))
+    for fl,shift in [('oil',-.18),('gas',.18)]:
+        k=cv.loc[cv.fluid==fl];ax.bar(k.window+shift,k.uncovered_pct,width=.34,label=FL[fl])
+    ax.legend();ax.set_xlabel('Окно');ax.set_ylabel('Доля факта вне скважинного прогноза, %')
+    save(fig,'S5_coverage','Покрытие скважинного прогноза','Новые/коротко наблюдавшиеся стволы не добавляются задним числом. Это доля факта, а не доказанная доля итоговой ошибки.')
+    fig,axs=plt.subplots(1,2,figsize=(12,5))
+    for ax,fl in zip(axs,('oil','gas')):
+        for name in ('auto_inner','mean6','median6','well_median6'):
+            g=pr.loc[(pr.fluid==fl)&(pr.model==name)]
+            vals=[wape(k.actual,k.pred) for h,k in g.groupby('horizon')];ax.plot(range(1,7),vals,'o-',label=LABELS[name],lw=3 if name=='auto_inner' else 1.5,zorder=10 if name=='auto_inner' else 3)
+        ax.set_title(FL[fl]);ax.set_xlabel('Горизонт, мес.');ax.set_ylabel('WAPE по пяти датам, %');ax.legend(fontsize=7)
+    save(fig,'S6_horizons','Ошибка по горизонтам','WAPE отдельно по каждому горизонту — другая агрегация, не RMS WAPE по окнам.')
+    (dest/'figure_manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
+    doc=Document();doc.add_heading('Volve v3: выполненный расчёт',0)
+    doc.add_paragraph('Прямые горизонты 1…6 без линейного времени и рекурсии. Основной сценарий — только история. Архивный план не предоставлен. Oracle с фактическими будущими часами отделён. Пять окон уже изучались при разработке: это ретроспективная оценка, не новый независимый тест.')
+    doc.add_paragraph('На графиках T1…T5 вариант автовыбора показан жирной синей линией с ромбами и подписью выбранной модели. В большинстве окон автовыбор выбирает среднее или медиану и потому полностью совпадает с соответствующей фиксированной линией; такие случаи отмечены на самих графиках.')
+    doc.add_heading('Выбор автовыбора по окнам',1)
+    t=doc.add_table(rows=1,cols=5);t.style='Light Shading Accent 1'
+    for c,v in zip(t.rows[0].cells,['Окно','Флюид','Выбрано','Внутр. WAPE, %','Комментарий']): c.text=v
+    for r in ch.loc[ch.scope=='field'].itertuples():
+        row=t.add_row().cells;row[0].text=str(r.window);row[1].text=FL[r.fluid]
+        row[2].text=MODEL_RU[r.selected]+('' if pd.isna(r.alpha) else f', alpha={r.alpha:g}')
+        row[3].text='—' if pd.isna(r.inner_wape) else f'{r.inner_wape:.2f}'
+        row[4].text='запасное правило: нет внутренних фолдов' if r.fallback else 'выбрано по внутренней валидации'
+    doc.add_paragraph('Автовыбор использует внутренние отсечения −6/−12/−18 месяцев, минимум 18 месяцев истории. Кандидаты: mean6/median6/last/Ridge/Ridge+log1p(вода/нефть), alpha=1/10/100. Лаги 1/2/3/6, средние 3/6, стандартное отклонение 6. Физический признак — гипотеза log1p(вода/нефть), не буквальное ln(ВНФ). Арпс, LightGBM, Transformer, CSDI и нефть×ГФ из v2 не пересчитывались.')
+    t=doc.add_table(rows=1,cols=3);t.style='Light Shading Accent 1'
+    for c,v in zip(t.rows[0].cells,['Метод','Нефть RMS WAPE, %','Газ RMS WAPE, %']): c.text=v
+    for name in order:
+        row=t.add_row().cells;row[0].text=LABELS[name]
+        for i,fl in enumerate(('oil','gas'),1): row[i].text=f'{summ.loc[(summ.fluid==fl)&(summ.model==name),"RMS_WAPE"].iloc[0]:.2f}'
+    doc.add_paragraph('Автовыбор почти не улучшает медиану. Скважинная медиана ретроспективно лучше, но выбирать победителя по тому же тесту нельзя. WAPE=100×Σ|факт−прогноз|/Σ|факт|; RMS WAPE=sqrt(mean(WAPE²)) по пяти окнам.')
+    for item in sorted(manifest,key=lambda x:x['id']):
+        doc.add_page_break();doc.add_heading(item['id']+': '+item['title'],1);doc.add_picture(str(pics/item['file']),width=Inches(6.3));doc.add_paragraph(item['caption'])
+    doc.save(dest/'Volve_v3_report.docx')
+    with pd.ExcelWriter(dest/'Volve_v3_metrics.xlsx',engine='openpyxl') as writer:
+        for name in ('summary','window_metrics','model_choices','coverage','coverage_summary','predictions','inner_validation','well_predictions'): frames[name].to_excel(writer,sheet_name=name[:31],index=False)
+    return manifest
+
+def run(path='data/data.xlsx',dest='reports/v3',render=True):
     dest=Path(dest);dest.mkdir(parents=True,exist_ok=True)
     monthly,field,wells=load_data(path);collected={}
     for w,cut in WINDOWS:
@@ -149,6 +260,7 @@ def run(path='data/data.xlsx',dest='reports/v3'):
     for name in ('predictions','train_fitted'):
         df=frames[name];df['error']=df.pred-df.actual;df['absolute_error']=df.error.abs()
         df['absolute_relative_error_pct']=np.where(df.actual!=0,100*df.absolute_error/df.actual.abs(),np.nan)
+    if render: artifacts(frames,dest)
     for name,df in frames.items(): df.to_csv(dest/(name+'.csv'),index=False)
     audit={'input_sha256':hashlib.sha256(Path(path).read_bytes()).hexdigest(),'monthly_rows':len(monthly),'windows':5,'scenario':'history_only + separate oracle','archive_plan_available':False,'legacy_models_recomputed':False}
     (dest/'execution_audit.json').write_text(json.dumps(audit,indent=2),encoding='utf-8')
